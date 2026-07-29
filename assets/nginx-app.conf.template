@@ -1,0 +1,26 @@
+# Reverse-proxy: liga a internet (nginx) ao seu app rodando numa porta local.
+# Uso:
+#   1. Trocar SEU_DOMINIO e PORTA.
+#   2. Salvar em /etc/nginx/sites-available/SEU_DOMINIO
+#   3. Ativar:  ln -s /etc/nginx/sites-available/SEU_DOMINIO /etc/nginx/sites-enabled/
+#   4. Testar:  nginx -t && systemctl reload nginx
+#   5. SSL:     certbot --nginx -d SEU_DOMINIO   (o certbot completa o https sozinho)
+#
+# O app deve escutar em 127.0.0.1:PORTA (nunca 0.0.0.0), so o nginx conversa com ele.
+
+server {
+    listen 80;
+    server_name SEU_DOMINIO;
+
+    location / {
+        proxy_pass http://127.0.0.1:PORTA;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
