@@ -5,6 +5,40 @@
 #   bash backup-projeto.sh --verificar <arquivo.age> <chave-privada>   # testa a restauracao
 set -euo pipefail
 
+# Um banco SQLite se reconhece pelo CABECALHO do arquivo, nunca pela extensao.
+#
+# Ate 17/08/2026 este script procurava `-name "*.db"`. Um banco chamado
+# `.sqlite` ou `.sqlite3` - nome comum em projeto Node, que e a stack do Orbita -
+# nao casava, e entao:
+#   1) nao recebia snapshot: ia cru no tar, com o .db, o -wal e o -shm copiados
+#      em momentos diferentes, sem atomicidade (o problema que o CLAUDE.md
+#      descreve para o `cp`, valendo igual para o `tar`);
+#   2) o --verificar nunca o abria, e respondia APROVADO sobre um banco que
+#      jamais foi lido.
+# Provado no ensaio de 17/08/2026: 8 KB de lixo binario chamado `dados.sqlite3`
+# gerou backup sem reclamacao e o --verificar respondeu APROVADO com codigo 0.
+# O mesmo lixo chamado `dados.db` foi corretamente rejeitado.
+#
+# Agora o nome do arquivo nao importa mais: vale o que esta dentro dele.
+eh_sqlite() {
+  [ -f "$1" ] || return 1
+  [ "$(head -c 15 "$1" 2>/dev/null)" = "SQLite format 3" ]
+}
+
+# ...mas o nome ainda serve para UMA coisa: desconfiar.
+# Trocar nome por cabecalho corrigiu o furo dos `.sqlite`/`.sqlite3`, e de quebra
+# calou um alarme que existia antes: ate 17/08/2026 um `prontuarios.db` com lixo
+# dentro ABORTAVA o backup; com a checagem so por cabecalho ele passou a
+# atravessar em silencio, empacotado como arquivo comum, e o --verificar
+# respondia APROVADO. Banco de paciente corrompido nao pode passar calado.
+# Entao: cabecalho decide o que E banco; o nome decide o que MERECE BARULHO.
+tem_nome_de_banco() {
+  case "$1" in
+    *.db|*.sqlite|*.sqlite3) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 if [ "${1:-}" = "--verificar" ]; then
   ARQ="${2:?informe o .age}"; KEY="${3:?informe a chave privada age}"
   TMP="$(mktemp -d)"
@@ -20,9 +54,23 @@ if [ "${1:-}" = "--verificar" ]; then
   echo "--- arquivos (caminho completo) ---"
   find "$TMP" -type f -printf '%10s  %p\n' | sort -k2
 
-  # todo banco encontrado e ABERTO e CONTADO, nao so listado
+  # todo banco encontrado e ABERTO e CONTADO, nao so listado.
+  # Varre TODO arquivo do pacote e pergunta a cada um se e banco, em vez de
+  # confiar no nome. Arquivo comum simplesmente nao casa e segue adiante.
   falhou=0
+  achados=0
   while IFS= read -r db; do
+    if ! eh_sqlite "$db"; then
+      if tem_nome_de_banco "$db"; then
+        echo
+        echo "--- banco: $db ---"
+        echo "  !! REPROVADO: tem nome de banco, mas nao ha cabecalho SQLite dentro."
+        echo "     Ou o banco corrompeu, ou o nome engana. Olhe antes de confiar."
+        falhou=1
+      fi
+      continue
+    fi
+    achados=$((achados + 1))
     echo
     echo "--- banco: $db ---"
     integ="$(sqlite3 "$db" 'PRAGMA integrity_check;' 2>&1 | head -1)"
@@ -37,7 +85,7 @@ if [ "${1:-}" = "--verificar" ]; then
         echo "     tabela '$t': $(sqlite3 "$db" "SELECT count(*) FROM \"$t\";" 2>/dev/null) linhas"
       done
     fi
-  done < <(find "$TMP" -name '*.db' 2>/dev/null)
+  done < <(find "$TMP" -type f 2>/dev/null)
 
   echo
   if [ "$falhou" -eq 1 ]; then
@@ -45,7 +93,13 @@ if [ "${1:-}" = "--verificar" ]; then
     echo "   (apague $TMP depois)"
     exit 1
   fi
-  echo ">> APROVADO: abre, restaura e os bancos tem conteudo."
+  # Dizer "os bancos tem conteudo" quando nenhum banco foi aberto e mentira
+  # confortavel. Se nao havia banco no pacote, o texto tem que dizer isso.
+  if [ "$achados" -eq 0 ]; then
+    echo ">> APROVADO: abre e restaura. NENHUM banco SQLite no pacote - nao havia banco a conferir."
+  else
+    echo ">> APROVADO: abre, restaura, e os $achados banco(s) encontrado(s) tem conteudo."
+  fi
   echo "   (apague $TMP depois)"
   exit 0
 fi
@@ -53,7 +107,7 @@ fi
 DIR="${1:?informe o diretorio do projeto}"
 AGE_PUB="${2:?informe a chave publica age (para cifrar)}"
 command -v age >/dev/null     || { echo "age nao instalado (rode o setup-vps.sh)."; exit 1; }
-command -v sqlite3 >/dev/null || echo "aviso: sqlite3 ausente, bancos .db serao copiados sem hot-backup."
+command -v sqlite3 >/dev/null || echo "aviso: sqlite3 ausente, bancos SQLite serao copiados sem hot-backup."
 
 DIR="${DIR%/}"
 NOME="$(basename "$DIR")"
@@ -71,6 +125,14 @@ tar -c --exclude=node_modules --exclude=dist --exclude=.git \
 if command -v sqlite3 >/dev/null; then
   while IFS= read -r db; do
     rel="${db#"$DIR"/}"
+    if ! eh_sqlite "$db"; then
+      if tem_nome_de_banco "$db"; then
+        echo "ERRO: '$rel' tem nome de banco, mas nao ha cabecalho SQLite dentro." >&2
+        echo "      Ou o banco corrompeu, ou o nome engana. Backup ABORTADO." >&2
+        exit 1
+      fi
+      continue
+    fi
     mkdir -p "$STAGE/$NOME/$(dirname "$rel")"
     destino="$STAGE/$NOME/$rel"
     if ! sqlite3 "$db" ".backup '$destino'"; then
@@ -82,8 +144,18 @@ if command -v sqlite3 >/dev/null; then
       echo "ERRO: banco '$rel' reprovou no integrity_check ($integridade). Backup ABORTADO." >&2
       exit 1
     fi
+    # O tar do passo 1 copiou o -wal e o -shm crus junto. Depois do snapshot eles
+    # estao velhos e nao pertencem mais a este arquivo: no restauro, o SQLite
+    # tentaria reaplicar um WAL que nao e deste banco. O snapshot ja veio completo,
+    # com o WAL incorporado - entao os dois somem do pacote.
+    rm -f "$destino-wal" "$destino-shm"
     echo "  banco ok: $rel (integrity_check: $integridade)"
-  done < <(find "$DIR" -maxdepth 3 -name "*.db" 2>/dev/null)
+    # Varre o mesmo conjunto que o tar do passo 1 empacotou - nem mais, nem menos.
+    # Antes era `-maxdepth 3 -name "*.db"`: alem de depender do nome, perdia banco
+    # guardado mais fundo que tres niveis, que e onde projeto Node costuma pos-lo.
+  done < <(find "$DIR" -type f \
+             -not -path "*/node_modules/*" -not -path "*/.git/*" -not -path "*/dist/*" \
+             2>/dev/null)
 fi
 
 # 3) empacota
