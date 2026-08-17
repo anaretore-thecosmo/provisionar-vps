@@ -110,6 +110,45 @@ cat > /etc/logrotate.d/apps <<'LR'
 LR
 
 log "12/12  Docker (opcional)"
+# TRAVA DE MAQUINA: ha maquinas que recusam Docker por decisao consciente (menos
+# superficie de ataque - tipico de servidor que guarda dado sensivel). Um "yes"
+# digitado por engano na variavel nao pode furar essa decisao.
+#
+# Como marcar uma maquina destas, de dois jeitos:
+#   1. arquivo /etc/vps-sem-docker
+#        - vazio         -> esta maquina recusa Docker, seja qual for o hostname
+#        - com hostnames -> um por linha; recusa se o hostname atual estiver la
+#          (linha comecando com # e comentario)
+#   2. variavel VPS_SEM_DOCKER="host1 host2"  -> recusa nesses hostnames
+docker_recusado_nesta_maquina() {
+  local host marcador linha
+  host="$(hostname)"
+  marcador=/etc/vps-sem-docker
+
+  if [ -f "$marcador" ]; then
+    # sem nenhuma linha util = marcador de presenca: vale para esta maquina
+    if ! grep -qvE '^[[:space:]]*(#|$)' "$marcador"; then
+      return 0
+    fi
+    while IFS= read -r linha; do
+      linha="${linha%%#*}"
+      linha="$(echo "$linha" | tr -d '[:space:]')"
+      [ -n "$linha" ] && [ "$linha" = "$host" ] && return 0
+    done < "$marcador"
+  fi
+
+  for linha in $VPS_SEM_DOCKER; do
+    [ "$linha" = "$host" ] && return 0
+  done
+
+  return 1
+}
+
+if [ "$INSTALL_DOCKER" = "yes" ] && docker_recusado_nesta_maquina; then
+  echo "!! RECUSADO: esta maquina esta marcada para nao receber Docker." >&2
+  echo "   Origem da marca: /etc/vps-sem-docker ou VPS_SEM_DOCKER. Veja a decisao no RUNBOOK.md." >&2
+  INSTALL_DOCKER=no
+fi
 if [ "$INSTALL_DOCKER" = "yes" ]; then
   curl -fsSL https://get.docker.com | sh
   systemctl enable --now docker
