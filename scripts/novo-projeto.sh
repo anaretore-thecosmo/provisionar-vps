@@ -24,9 +24,32 @@ DIR="$BASE/$NOME"
 # TRAVA 2: nao sobrescreve projeto existente
 [ -e "$DIR" ] && { echo "!! '$DIR' ja existe. Escolha outro nome."; exit 1; }
 
-# TRAVA 3: porta ja usada?
-if [ -f "$PORTAS" ] && grep -qE "^\| *$PORTA " "$PORTAS"; then
-  echo "!! Porta $PORTA ja esta no PORTAS.md. Escolha outra."; exit 1
+# TRAVA 3: porta valida e realmente livre (registro + socket TCP).
+# Uma entrada no arquivo pode estar defasada; antes de reutilizar, exigir revisao.
+if (( 10#$PORTA < 1024 || 10#$PORTA > 65535 )); then
+  echo "!! Porta precisa estar entre 1024 e 65535." >&2
+  exit 1
+fi
+if [ -f "$PORTAS" ] && awk -F'|' -v porta="$PORTA" '
+  NF >= 3 {
+    atual=$2
+    gsub(/^[[:space:]]+|[[:space:]]+$/, "", atual)
+    if (atual == porta) { encontrado=1; exit }
+  }
+  END { exit !encontrado }
+' "$PORTAS"; then
+  echo "!! Porta $PORTA ja registrada no PORTAS.md." >&2
+  exit 1
+fi
+if command -v ss >/dev/null 2>&1 && ss -H -ltn | awk -v porta="$PORTA" '
+  {
+    n=split($4, partes, ":")
+    if (partes[n] == porta) { encontrado=1; exit }
+  }
+  END { exit !encontrado }
+'; then
+  echo "!! Porta $PORTA esta em uso por um servico TCP." >&2
+  exit 1
 fi
 
 mkdir -p "$DIR"

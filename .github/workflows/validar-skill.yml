@@ -1,0 +1,33 @@
+name: Validar skill universal
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python e testes do gerador
+        run: |
+          python3 -m compileall -q scripts/ambientes.py tests/
+          python3 -m unittest discover -s tests -v
+      - name: Sintaxe dos scripts Bash
+        run: |
+          bash -n assets/setup-vps.sh
+          bash -n scripts/auditar-vps.sh
+          bash -n scripts/novo-projeto.sh
+          bash -n scripts/backup-projeto.sh
+      - name: Validar JSON de exemplo
+        run: python3 -m json.tool assets/ambientes.example.json >/dev/null
+      - name: Detectar arquivos com dados privados acidentalmente adicionados
+        run: |
+          if git ls-files | grep -E '(^|/)(\.env(\.|$)|id_(rsa|ed25519)$|.*\.(pem|key)$)'; then
+            echo 'Arquivo sensível rastreado pelo Git' >&2
+            exit 1
+          fi

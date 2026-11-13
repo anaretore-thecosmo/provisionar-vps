@@ -11,6 +11,7 @@ SWAP_GB="${SWAP_GB:-2}"                 # tamanho do swap em GB
 TIMEZONE="${TIMEZONE:-America/Sao_Paulo}"
 NODE_MAJOR="${NODE_MAJOR:-22}"
 INSTALL_DOCKER="${INSTALL_DOCKER:-no}"  # "yes" so se a VPS for usar containers
+VPS_SEM_DOCKER="${VPS_SEM_DOCKER:-}"  # ausente nao deve abortar em set -u
 # -------------------------------
 
 log(){ echo -e "\n\033[1;36m>>> $1\033[0m"; }
@@ -35,15 +36,26 @@ if ! command -v gitleaks >/dev/null; then
   GL_VER="$(curl -fsSL https://api.github.com/repos/gitleaks/gitleaks/releases/latest | jq -r .tag_name | tr -d v)"
   ARCH="$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')"
   curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VER}/gitleaks_${GL_VER}_linux_${ARCH}.tar.gz" \
-    | tar -xz -C /usr/local/bin gitleaks 2>/dev/null && chmod +x /usr/local/bin/gitleaks || echo "  (gitleaks: instale manualmente se falhar)"
+    | tar -xz -C /usr/local/bin gitleaks 2>/dev/null && chmod +x /usr/local/bin/gitleaks || {
+      echo "ERRO: nao foi possivel instalar gitleaks. Configuracao interrompida." >&2
+      exit 1
+    }
 fi
-# hook global: todo 'git commit' passa pelo gitleaks antes
+# Nota: este hook protege commits feitos pelo usuario root nesta VPS.
+# Nao protege outros usuarios nem substitui varredura obrigatoria no CI.
+# hook global: todo 'git commit' do root passa pelo gitleaks antes
 git config --global core.hooksPath /root/.git-hooks
 mkdir -p /root/.git-hooks
 cat > /root/.git-hooks/pre-commit <<'HOOK'
 #!/usr/bin/env bash
-command -v gitleaks >/dev/null || exit 0
-gitleaks protect --staged --redact -v || { echo "!! COMMIT BLOQUEADO: segredo detectado. Remova antes de commitar."; exit 1; }
+command -v gitleaks >/dev/null || {
+  echo "!! COMMIT BLOQUEADO: gitleaks obrigatorio indisponivel." >&2
+  exit 1
+}
+gitleaks git --pre-commit --staged --redact -v . || {
+  echo "!! COMMIT BLOQUEADO: gitleaks detectou segredo ou falhou." >&2
+  exit 1
+}
 HOOK
 chmod +x /root/.git-hooks/pre-commit
 
