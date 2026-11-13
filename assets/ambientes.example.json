@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "projects": [
+    {
+      "id": "projeto-exemplo",
+      "name": "Projeto Exemplo",
+      "location": "ssh",
+      "ssh_alias": "servidor-exemplo",
+      "workdir": "/home/deploy/projetos/exemplo",
+      "sensitivity": "standard",
+      "palette_sources": ["./tokens.json"],
+      "agents": {
+        "claude": { "color": "#246A73" },
+        "codex": { "color": "#A06723" }
+      }
+    }
+  ]
+}
