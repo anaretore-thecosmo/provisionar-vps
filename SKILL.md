@@ -99,3 +99,23 @@ em GitHub privado (sem `.env`). Agendar no cron. Testar restauracao com `--verif
 
 ---
 Skill autoral de **Ana Retore, The Cosmo**. Livre para uso e redistribuicao, mantido o credito de autoria.
+
+
+## Módulo universal de ambientes Codex + Claude Code (v2 experimental)
+
+> **Status:** primeira fase implementada e testada localmente. Não provisiona os CLIs nem realiza configurações nas VPS automaticamente. A instalação remota depende de auditoria, autorização e homologação.
+
+Antes de supor que o usuário utiliza uma ferramenta, VPS ou paleta específica, consultar `references/ambientes-multiplataforma.md`. O objetivo é configurar qualquer combinação escolhida de **Codex, Claude Code, computadores e VPS**, sem embutir dados de clientes na skill.
+
+Regras obrigatórias:
+
+1. **Descobrir antes de perguntar:** inventariar ferramentas instaladas, projetos, pastas e identidades visuais nos locais autorizados. O módulo `scripts/ambientes.py` oferece `inspecionar` e `plano` em modo somente leitura.
+2. **Perguntar uma coisa por vez** quando faltarem dados. Não inventar servidor, diretório, paleta nem credenciais. Cor encontrada em CSS/tokens é sugestão, sujeita a seleção do usuário.
+3. **Personalizar sem acoplar:** uma fonte comum, manifesto individual por usuário/projeto e adaptadores para cada agente, terminal e SO. O exemplo em `assets/ambientes.example.json` é fictício.
+4. **Aprovações proporcionais ao risco:** evitar solicitações repetidas usando recursos nativos de sandbox/autorização; operações destrutivas, produção, segredos e dados sensíveis continuam protegidos.
+5. **Windows Terminal:** gerar perfis por fragmentos JSON sem substituir o `settings.json` existente; instalar somente após revisar simulação e fornecer `--aplicar`. O script `scripts/launch-agent.ps1` abre o agente no projeto selecionado e bloqueia falha de SSH, sem mudar de servidor silenciosamente.
+6. **Comprovar por ferramenta e projeto:** teste de instalação, versão, acesso, perfil, VPS, permissões e diretório correto. Não declarar sucesso com evidência parcial.
+
+**Compatibilidade de referência:** Codex usa `AGENTS.md` e instalações de skills adequadas à sua versão; Claude Code usa `CLAUDE.md` e suas próprias instalações de skills. As configurações nativas de permissões não são copiadas entre ferramentas; devem ser geradas e homologadas separadamente.
+
+A versão anterior da trilha de VPS continua preservada. Este módulo é complementar, não altera o comportamento dos scripts de provisionamento existentes.
